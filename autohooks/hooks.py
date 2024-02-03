@@ -19,27 +19,27 @@ from autohooks.template import (
 )
 from autohooks.utils import get_git_hook_directory_path
 
-
-def get_pre_commit_hook_path():
-    git_hook_dir_path = get_git_hook_directory_path()
-    return git_hook_dir_path / "pre-commit"
+VERSION_PATTERN = re.compile("{\s*version\s*=\s*?(\d+)\s*}$", re.MULTILINE)
 
 
-class PreCommitHook:
+def default_pre_commit_hook_path():
+    return get_git_hook_directory_path() / "pre-commit"
+
+
+class PreCommitHook(Hook):
+    pre_commit_hook_path = default_pre_commit_hook_path()
+
     def __init__(self, pre_commit_hook_path: Optional[Path] = None) -> None:
-        self._pre_commit_hook = None
-
-        if pre_commit_hook_path is None:
-            self.pre_commit_hook_path = get_pre_commit_hook_path()
-        else:
+        if pre_commit_hook_path:
             self.pre_commit_hook_path = pre_commit_hook_path
 
-    @property
+    @cached_property
     def pre_commit_hook(self) -> str:
-        if self._pre_commit_hook is None:
-            self._pre_commit_hook = self.pre_commit_hook_path.read_text()
+        return self.pre_commit_hook_path.read_text()
 
-        return self._pre_commit_hook  # type: ignore
+    @cached_property
+    def pre_commit_hook_path(self):
+        return default_pre_commit_hook_path()
 
     def exists(self) -> bool:
         return self.pre_commit_hook_path.exists()
@@ -54,7 +54,7 @@ class PreCommitHook:
 
     def read_mode(self) -> Mode:
         lines = self.pre_commit_hook.split("\n")
-        if len(lines) < 1 or len(lines[0]) == 0:
+        if not lines or not lines[0]:
             return Mode.UNDEFINED
 
         shebang = lines[0][2:]
@@ -66,23 +66,18 @@ class PreCommitHook:
         if shebang == PIPENV_SHEBANG:
             return Mode.PIPENV
 
-        shebang = f"{lines[0][2:]}\n"
-        shebang += "\n".join(lines[1:5])
-        if shebang == POETRY_MULTILINE_SHEBANG:
+        multiline_shebang = "\n".join([shebang] + lines[1:5])
+
+        if multiline_shebang == POETRY_MULTILINE_SHEBANG:
             return Mode.POETRY_MULTILINE
-
-        if shebang == PIPENV_MULTILINE_SHEBANG:
+        if multiline_shebang == PIPENV_MULTILINE_SHEBANG:
             return Mode.PIPENV_MULTILINE
-
         return Mode.UNKNOWN
 
     def read_version(self) -> int:
-        matches = re.search(
-            r"{\s*version\s*=\s*?(\d+)\s*}$", self.pre_commit_hook, re.MULTILINE
-        )
+        matches = VERSION_PATTERN.search(self.pre_commit_hook)
         if not matches:
             return -1
-
         return int(matches.group(1))
 
     def write(self, *, mode: Mode) -> None:
@@ -92,7 +87,7 @@ class PreCommitHook:
         self.pre_commit_hook_path.write_text(pre_commit_hook)
         self.pre_commit_hook_path.chmod(0o775)
 
-        self._pre_commit_hook = None
+        del self.pre_commit_hook  # reset cached_property
 
     def __str__(self) -> str:
         return str(self.pre_commit_hook_path)
